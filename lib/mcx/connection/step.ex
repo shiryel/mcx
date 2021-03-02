@@ -18,17 +18,16 @@ defmodule Mcx.Connection.Step do
     {id, data} = LEB128.decode(data)
 
     step(id, data, state)
-    {:proxy, data}
   end
 
   defp encode(id, data) do
+    pack = LEB128.encode(id) <> data
+
     lenght =
-      String.length(data)
+      String.length(pack)
       |> LEB128.encode()
 
-    id = LEB128.encode(id)
-
-    lenght <> id <> data
+    lenght <> pack
   end
 
   # Handshake
@@ -45,7 +44,7 @@ defmodule Mcx.Connection.Step do
 
     Logger.debug("Handshake, version: #{version}, status: #{status}")
 
-    %{state | status: status}
+    {:proxy, %{state | status: status}}
   end
 
   # Server List
@@ -53,7 +52,7 @@ defmodule Mcx.Connection.Step do
   # id: 0
   #    -
   #    -
-  def step(0, _data, %{status: 1, transport: transport, socket: socket} = state) do
+  def step(0, _data, %{status: 1} = state) do
     Logger.debug("Server List")
 
     resp =
@@ -64,13 +63,7 @@ defmodule Mcx.Connection.Step do
         },
         players: %{
           max: 100,
-          online: 0,
-          sample: [
-            %{
-              name: "default",
-              id: "4566e69f-c907-48ee-8d71-d7ba5aa00d20"
-            }
-          ]
+          online: 0
         },
         description: %{
           text: "Hello world"
@@ -78,14 +71,14 @@ defmodule Mcx.Connection.Step do
       }
       |> Jason.encode!()
 
+    # Needs to encode the length of the JSON 
+    # before the JSON!
     length =
       String.length(resp)
       |> LEB128.encode()
-
     pack = encode(0, length <> resp)
-    transport.send(socket, pack)
 
-    state
+    {:send, pack, state}
   end
 
   # Ping/Pong
@@ -93,18 +86,16 @@ defmodule Mcx.Connection.Step do
   # id: 1
   #   payload
   #   payload
-  def step(1, data, %{transport: transport, socket: socket} = state) do
-    pack = encode(1, data)
-    transport.send(socket, pack)
-
+  def step(1, data, state) do
     Logger.debug("Ping/Pong")
 
-    %{state | status: 2}
+    pack = encode(1, data)
+    {:send, pack, %{state | status: 2}}
   end
 
   def step(id, data, state) do
-    Logger.warn("Step ID #{id} not implemented with data: #{data}")
+    Logger.warn("Step ID #{id} not implemented \n> Data: #{data} \n> Data+: #{inspect data} \n> State+: #{inspect state}")
 
-    state
+    {:proxy, state}
   end
 end

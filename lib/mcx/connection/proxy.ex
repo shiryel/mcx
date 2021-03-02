@@ -11,7 +11,7 @@ defmodule Mcx.Connection.Proxy do
   defstruct client_socket: nil,
             client_transport: nil,
             server_socket: nil,
-            step_state: nil
+            step_state: %{status: 0}
 
   alias :gen_tcp, as: GenTcp
   alias :proc_lib, as: ProcLib
@@ -32,9 +32,11 @@ defmodule Mcx.Connection.Proxy do
   @impl GenServer
   def init(status) do
     Logger.debug("Starting Proxy...")
+
     ip = Application.get_env(:mcx, :proxy_ip)
     port = Application.get_env(:mcx, :proxy_port)
     {:ok, socket} = GenTcp.connect(ip, port, [:binary, active: true], 3000)
+
     :gen_server.enter_loop(__MODULE__, [], %{status | server_socket: socket})
   end
 
@@ -62,13 +64,23 @@ defmodule Mcx.Connection.Proxy do
   @impl GenServer
   def handle_cast(
         {:send, data},
-        %__MODULE__{server_socket: socket, step_state: step_state} = state
+        %__MODULE__{client_transport: client_transport, client_socket: client_socket, server_socket: socket, step_state: step_state} = state
       ) do
     Logger.debug("Receive...")
 
+    #
+    # Incoming messages will be handled by the Step module
+    # The Step module will define 2 types of returns:
+    # > proxy - redirect the message to the minecraft server, where it will came back on the handle_info
+    # > internal - handle internally the value without the minecraft server
+    #
     case Step.run(data, step_state) do
       {:proxy, step_state} ->
         GenTcp.send(socket, data)
+        {:noreply, %{state | step_state: step_state}}
+
+      {:send, pack, step_state} ->
+        client_transport.send(client_socket, pack)
         {:noreply, %{state | step_state: step_state}}
     end
   end
